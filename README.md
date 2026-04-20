@@ -15,10 +15,14 @@ Minimal runtime package for integrating face detection and live emotion recognit
 
 ## Intended use
 
-This package is the integration subset from the full training project. It excludes dataset folders, training scripts, and evaluation artifacts.
+This package is the integration subset from the full training project. 6 emotion : anger, fear, happy, neutral, sad, suprise
 
 ## Main runtime assets
 
 - Face detection model: `YOLOv8n-face`
 - Emotion backbone: `ConvNeXtV2 Pico`
 - Live deployment checkpoint: `artifacts/checkpoints/live_webcam_run1/best.pt`
+
+## future development
+- try another emotion model
+- try combine emotion to make another label
