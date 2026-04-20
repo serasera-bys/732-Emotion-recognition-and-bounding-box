@@ -1,0 +1,47 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+TRAIN_IMAGES_DIR = PROJECT_ROOT / "train_images"
+TEST_IMAGES_DIR = PROJECT_ROOT / "test_images"
+CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"
+YOLO_WEIGHTS_PATH = PROJECT_ROOT / "yolov8n-face.pt"
+ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
+EVALUATION_DIR = ARTIFACTS_DIR / "evaluation"
+EVALUATION_RUNS_DIR = ARTIFACTS_DIR / "evaluation_runs"
+LIVE_LOGS_DIR = ARTIFACTS_DIR / "live_logs"
+LIVE_DATA_DIR = ARTIFACTS_DIR / "live_data"
+LIVE_WEBCAM_DATASET_DIR = LIVE_DATA_DIR / "webcam_dataset"
+LIVE_DEPLOYMENT_DATA_DIR = LIVE_DATA_DIR / "deployment_dataset"
+
+DEFAULT_IMAGE_SIZE = 224
+DEFAULT_BATCH_SIZE = 10
+DEFAULT_NUM_EPOCHS = 1000
+DEFAULT_LEARNING_RATE = 1e-5
+DEFAULT_WEIGHT_DECAY = 1e-4
+DEFAULT_LIVE_CONFIDENCE_THRESHOLD = 0.6
+DEFAULT_SMOOTHING_WINDOW = 5
+DEFAULT_DEBOUNCE_FRAMES = 3
+DEFAULT_FLICKER_HOLD_FRAMES = 4
+DEFAULT_MIN_FACE_AREA_RATIO = 0.03
+DEFAULT_PARTIAL_FACE_BORDER_MARGIN = 4
+DEFAULT_MIN_BRIGHTNESS = 35.0
+DEFAULT_MIN_SHARPNESS = 25.0
+
+
+def ensure_project_dirs() -> None:
+    for path in (
+        CHECKPOINTS_DIR,
+        ARTIFACTS_DIR,
+        EVALUATION_DIR,
+        EVALUATION_RUNS_DIR,
+        LIVE_LOGS_DIR,
+        LIVE_DATA_DIR,
+        LIVE_WEBCAM_DATASET_DIR,
+        LIVE_DEPLOYMENT_DATA_DIR,
+    ):
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            continue
