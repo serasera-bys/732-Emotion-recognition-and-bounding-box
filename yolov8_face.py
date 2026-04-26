@@ -8,7 +8,6 @@ from pathlib import Path
 import time
 
 import cv2
-from ultralytics import YOLO
 
 from config import (
     DEFAULT_DEBOUNCE_FRAMES,
@@ -18,11 +17,15 @@ from config import (
     DEFAULT_MIN_FACE_AREA_RATIO,
     DEFAULT_MIN_SHARPNESS,
     DEFAULT_PARTIAL_FACE_BORDER_MARGIN,
+    DEFAULT_STATE_PERSISTENCE_FRAMES,
+    DEFAULT_STATE_WINDOW_SECONDS,
     DEFAULT_SMOOTHING_WINDOW,
     LIVE_LOGS_DIR,
     YOLO_WEIGHTS_PATH,
     ensure_project_dirs,
 )
+from emotional_state import EmotionalStateTracker
+from face_detectors import FaceCandidate, build_face_detector, choose_face_from_candidates
 from inference import Inferencer
 from stability import EmotionStabilizer
 
@@ -51,6 +54,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--neutral-bias-margin", type=float, default=0.12)
     parser.add_argument("--neutral-fallback-threshold", type=float, default=0.18)
     parser.add_argument("--neutral-fallback-max-confidence", type=float, default=0.96)
+    parser.add_argument("--state-window-seconds", type=float, default=DEFAULT_STATE_WINDOW_SECONDS)
+    parser.add_argument("--state-persistence-frames", type=int, default=DEFAULT_STATE_PERSISTENCE_FRAMES)
     parser.add_argument("--log-path", default="")
     return parser.parse_args()
 
@@ -88,49 +93,16 @@ def choose_face(result, frame_shape, min_face_area_ratio: float, border_margin: 
     if result.boxes is None or len(result.boxes) == 0:
         return {"status": "no_face", "bbox": None, "face_confidence": 0.0, "face_count": 0}
 
-    boxes = []
+    candidates = []
     for xyxy, conf in zip(result.boxes.xyxy.cpu().numpy(), result.boxes.conf.cpu().numpy()):
         box = [int(value) for value in xyxy.tolist()]
-        boxes.append((box, float(conf)))
-
-    boxes.sort(key=lambda item: bbox_area(item[0]), reverse=True)
-    best_box, best_conf = boxes[0]
-    frame_height, frame_width = frame_shape[:2]
-    frame_area = max(1, frame_height * frame_width)
-    area_ratio = bbox_area(best_box) / frame_area
-    x1, y1, x2, y2 = best_box
-
-    if len(boxes) > 1:
-        return {
-            "status": "multiple_faces",
-            "bbox": best_box,
-            "face_confidence": best_conf,
-            "face_count": len(boxes),
-            "area_ratio": area_ratio,
-        }
-    if area_ratio < min_face_area_ratio:
-        return {
-            "status": "small_face",
-            "bbox": best_box,
-            "face_confidence": best_conf,
-            "face_count": 1,
-            "area_ratio": area_ratio,
-        }
-    if x1 <= border_margin or y1 <= border_margin or x2 >= frame_width - border_margin or y2 >= frame_height - border_margin:
-        return {
-            "status": "partial_face",
-            "bbox": best_box,
-            "face_confidence": best_conf,
-            "face_count": 1,
-            "area_ratio": area_ratio,
-        }
-    return {
-        "status": "ok",
-        "bbox": best_box,
-        "face_confidence": best_conf,
-        "face_count": 1,
-        "area_ratio": area_ratio,
-    }
+        candidates.append(FaceCandidate(bbox=box, confidence=float(conf)))
+    return choose_face_from_candidates(
+        candidates,
+        frame_shape,
+        min_face_area_ratio=min_face_area_ratio,
+        border_margin=border_margin,
+    )
 
 
 def default_log_path() -> Path:
@@ -185,7 +157,7 @@ def draw_text_with_outline(frame, text: str, origin: tuple[int, int], color: tup
     )
 
 
-def draw_status(frame, face_info: dict, stabilized: dict) -> None:
+def draw_status(frame, face_info: dict, stabilized: dict, state_row: dict) -> None:
     bbox = face_info.get("bbox")
     if bbox is not None:
         x1, y1, x2, y2 = bbox
@@ -197,6 +169,8 @@ def draw_status(frame, face_info: dict, stabilized: dict) -> None:
     ]
     if stabilized.get("override_note"):
         label_lines.append(f"bias: {stabilized['override_note']}")
+    if state_row.get("state_label") and state_row["state_label"] != "unknown":
+        label_lines.append(f"state: {state_row['state_label']} ({state_row['state_confidence']:.2f})")
     for item in stabilized.get("top_k_predictions", []):
         label_lines.append(f"{item['class_name']}: {item['confidence']:.2f}")
     origin_x = 12
@@ -243,13 +217,18 @@ def apply_neutral_bias(
 def main() -> None:
     args = parse_args()
     ensure_project_dirs()
-    detector = YOLO(args.weights)
+    detector = build_face_detector("yolov8n-face", weights=args.weights, conf=args.conf)
     inferencer = Inferencer(args.checkpoint, device=args.device)
     stabilizer = EmotionStabilizer(
         smoothing_window=args.smoothing_window,
         debounce_frames=args.debounce_frames,
         flicker_hold_frames=args.flicker_hold_frames,
         confidence_threshold=args.confidence_threshold,
+    )
+    state_window_size = max(3, int(args.state_window_seconds * max(1, args.fps)))
+    state_tracker = EmotionalStateTracker(
+        window_size=state_window_size,
+        persistence_frames=args.state_persistence_frames,
     )
     class_thresholds = parse_class_thresholds(args.class_threshold)
 
@@ -277,6 +256,10 @@ def main() -> None:
                 "effective_threshold",
                 "override_note",
                 "top_predictions",
+                "state_label",
+                "state_confidence",
+                "state_explanation",
+                "state_dominant_emotions",
             ],
         )
         writer.writeheader()
@@ -289,17 +272,13 @@ def main() -> None:
                     break
                 frame_index += 1
 
-                results = detector.predict(source=frame, verbose=False, conf=args.conf)
-                result = results[0] if results else None
-                if result is None:
-                    face_info = {"status": "no_face", "bbox": None, "face_confidence": 0.0, "face_count": 0}
-                else:
-                    face_info = choose_face(
-                        result,
-                        frame.shape,
-                        min_face_area_ratio=args.min_face_area_ratio,
-                        border_margin=args.partial_face_border_margin,
-                    )
+                candidates = detector.detect(frame)
+                face_info = choose_face_from_candidates(
+                    candidates,
+                    frame.shape,
+                    min_face_area_ratio=args.min_face_area_ratio,
+                    border_margin=args.partial_face_border_margin,
+                )
 
                 raw_label = face_info["status"]
                 emotion_confidence = 0.0
@@ -308,6 +287,7 @@ def main() -> None:
                 effective_threshold = args.confidence_threshold
                 top_k_predictions: list[dict[str, float | str]] = []
                 override_note = ""
+                score_map: dict[str, float] | None = None
                 bbox = face_info.get("bbox")
                 if face_info["status"] == "ok" and bbox is not None:
                     x1, y1, x2, y2 = bbox
@@ -343,6 +323,7 @@ def main() -> None:
                                 raw_label = "low_confidence"
 
                 stabilized = stabilizer.update(raw_label, emotion_confidence)
+                state_result = state_tracker.update(score_map if raw_label not in {"low_confidence", "unknown"} else None)
                 stabilized_row = {
                     "raw_label": stabilized.raw_label,
                     "stable_label": stabilized.stable_label,
@@ -351,6 +332,12 @@ def main() -> None:
                     "confidence": stabilized.confidence,
                     "top_k_predictions": top_k_predictions[: args.top_k_overlay],
                     "override_note": override_note,
+                }
+                state_row = {
+                    "state_label": state_result.label,
+                    "state_confidence": state_result.confidence,
+                    "state_explanation": state_result.explanation,
+                    "state_dominant_emotions": state_result.dominant_emotions,
                 }
 
                 writer.writerow(
@@ -370,10 +357,14 @@ def main() -> None:
                         "effective_threshold": f"{effective_threshold:.3f}",
                         "override_note": override_note,
                         "top_predictions": json.dumps(top_k_predictions[: args.top_k_overlay]),
+                        "state_label": state_result.label,
+                        "state_confidence": f"{state_result.confidence:.6f}",
+                        "state_explanation": state_result.explanation,
+                        "state_dominant_emotions": json.dumps(state_result.dominant_emotions),
                     }
                 )
 
-                draw_status(frame, face_info, stabilized_row)
+                draw_status(frame, face_info, stabilized_row, state_row)
                 if bbox is not None:
                     x1, y1, x2, y2 = bbox
                     draw_text_with_outline(
@@ -391,7 +382,16 @@ def main() -> None:
             capture.release()
             cv2.destroyAllWindows()
 
-    print(json.dumps({"log_path": str(log_path.resolve()), "stabilizer": stabilizer.to_summary()}, indent=2))
+    print(
+        json.dumps(
+            {
+                "log_path": str(log_path.resolve()),
+                "stabilizer": stabilizer.to_summary(),
+                "emotional_state": state_tracker.to_summary(),
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

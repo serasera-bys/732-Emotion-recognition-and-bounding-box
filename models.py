@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 from torch import nn
-from torchvision.models import resnet18
+from torchvision.models import ResNet18_Weights, resnet18
 
 
 class BaselineEmotionCNN(nn.Module):
@@ -35,9 +35,10 @@ class BaselineEmotionCNN(nn.Module):
 
 
 class ResNet18EmotionClassifier(nn.Module):
-    def __init__(self, num_classes: int) -> None:
+    def __init__(self, num_classes: int, pretrained: bool) -> None:
         super().__init__()
-        model = resnet18(weights=None)
+        weights = ResNet18_Weights.DEFAULT if pretrained else None
+        model = resnet18(weights=weights)
         model.fc = nn.Linear(model.fc.in_features, num_classes)
         self.model = model
 
@@ -69,7 +70,7 @@ def build_model(arch: str, num_classes: int, pretrained: bool = True) -> nn.Modu
     if arch == "cnn":
         return BaselineEmotionCNN(num_classes=num_classes)
     if arch == "resnet18":
-        return ResNet18EmotionClassifier(num_classes=num_classes)
+        return ResNet18EmotionClassifier(num_classes=num_classes, pretrained=pretrained)
     if arch == "convnextv2_pico":
         return build_convnextv2_pico(num_classes=num_classes, pretrained=pretrained)
     raise ValueError(f"Unsupported architecture: {arch}")

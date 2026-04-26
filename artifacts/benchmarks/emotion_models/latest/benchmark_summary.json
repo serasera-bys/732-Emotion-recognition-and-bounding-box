@@ -1,0 +1,29 @@
+[
+  {
+    "model": "convnextv2_pico",
+    "model_type": "pretrained backbone",
+    "parameter_count": 8556358,
+    "public_test_accuracy": 0.893048128342246,
+    "webcam_test_accuracy": 0.9926739926739927,
+    "latency_ms": 11.983701593749174,
+    "strength_weakness_note": "Strongest class: sad (F1 1.000); Weakest class: fear (F1 0.979)"
+  },
+  {
+    "model": "resnet18",
+    "model_type": "pretrained backbone",
+    "parameter_count": 11179590,
+    "public_test_accuracy": 0.8288770053475936,
+    "webcam_test_accuracy": 0.9926739926739927,
+    "latency_ms": 6.4907496093837835,
+    "strength_weakness_note": "Strongest class: anger (F1 1.000); Weakest class: happy (F1 0.968)"
+  },
+  {
+    "model": "cnn",
+    "model_type": "custom baseline CNN",
+    "parameter_count": 422086,
+    "public_test_accuracy": 0.22994652406417113,
+    "webcam_test_accuracy": 0.5091575091575091,
+    "latency_ms": 7.415112828127235,
+    "strength_weakness_note": "Strongest class: neutral (F1 0.675); Weakest class: anger (F1 0.000)"
+  }
+]
